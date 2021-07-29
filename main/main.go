@@ -26,6 +26,8 @@ type Relationship struct {
 	Type   string `json:"type"`
 }
 
+// 代码最好分层，不要写在一个文件/方法中，可参考ttx-core
+
 func main() {
 	// build DB connection
 	db, err := sql.Open("postgres", DB_SDN)
@@ -38,9 +40,9 @@ func main() {
 
 	// show all users
 	router.GET("/users", func(c *gin.Context) {
-
 		rows, err := db.Query("SELECT * FROM users")
 		if err != nil {
+			// 接口查询数据库失败不要使用Fatal
 			log.Fatal(err)
 		}
 		defer rows.Close()
@@ -56,7 +58,7 @@ func main() {
 			user = append(user, us)
 		}
 
-		c.IndentedJSON(http.StatusOK, user)
+		c.IndentedJSON(http.StatusOK, user) // 出现error的情况的返回
 	})
 
 	// add a user
@@ -71,11 +73,12 @@ func main() {
 			)
 
 		}
+		// 接口需要做一些参数校验
 		_, err := db.Exec("INSERT INTO users (name, type) VALUES ($1, $2)", us.Name, us.Type)
 		if err != nil {
-			log.Fatal(err)
+			log.Fatal(err) //
 		}
-
+		// 并发情况下可能有问题，上面insert语句可以直接返回id
 		err = db.QueryRow("SELECT MAX(id) FROM users WHERE name = $1", us.Name).Scan(&us.ID)
 		if err != nil {
 			log.Fatal(err)
@@ -118,7 +121,7 @@ func main() {
 		if err := c.ShouldBindJSON(&rls); err != nil {
 			c.AbortWithStatusJSON(http.StatusInternalServerError, err)
 		}
-
+		// 参数校验
 		var curState string
 		err = db.QueryRow(
 			"SELECT state FROM relationships WHERE owner_id = $1 AND user_id = $2",
@@ -131,14 +134,16 @@ func main() {
 					ownerId, userId).Scan(&oppoState)
 
 				if oppoState == "liked" {
+					// 状态值最好定义const常量
 					rls.State = "matched"
 					oppoState = "matched"
+					// 两个更新语句需要使用事务，且select最新状态时，需要加锁
 					_, err = db.Exec(
 						"UPDATE relationships SET state = $1 WHERE user_id = $2 AND owner_id = $3",
 						oppoState, ownerId, userId)
 
 					_, err = db.Exec(
-						"INSERT INTO relationships VALUES ($1, $2, $3, 'relationship')",
+						"INSERT INTO relationships VALUES ($1, $2, $3, 'relationship')", // 
 						ownerId, userId, rls.State)
 
 				} else {
@@ -159,6 +164,7 @@ func main() {
 					rls.State, ownerId, userId)
 
 			} else if rls.State == "disliked" && curState == "matched" {
+				// 事务
 				_, err = db.Exec(
 					"UPDATE relationships SET state = $1 WHERE owner_id = $2 AND user_id = $3",
 					rls.State, ownerId, userId)
@@ -168,6 +174,7 @@ func main() {
 					ownerId, userId)
 			}
 		}
+		// error未处理
 
 		c.IndentedJSON(http.StatusOK, rls)
 
